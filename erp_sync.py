@@ -4,7 +4,7 @@ B2 — 入库登记 → 领星 orderAdd 快捷入库(真录库存)。
 读 入库登记台 入库状态=已入库 且 领星同步状态∈(空/待同步) → 每行建领星采购入库单:
   order_sn = 采购单号(从 入库行→关联提货→关联出货批次→关联合同「合同编号」反查; 传它=快捷入库自动引用供应商/单价)
   product_list = [{sku=ERP SKU(领星local_sku), good_num=实际入库数量}]
-  wid = 渠道/站点 → 领星本地仓(CHAN_TO_WID 草案, env LINGXING_WID_MAP 可覆盖)
+  wid = 仓库名 → 领星 wid(复用仓库映射表 tblBBOM07taRUtRQ 单一真相源, 同 procurement_to_erp)
   inbound_idempotent_code = record_id(唯一; 防领星判重)
 写回 领星入库单号 + 领星同步状态=已同步。
 
@@ -21,20 +21,34 @@ APP, PICK, SHIP, RECV, CONTRACT = pi.APP, pi.PICK, pi.SHIP, pi.RECV, pi.CONTRACT
 BASE = pi.BASE
 ORDERADD = "/erp/sc/routing/storage/storage/orderAdd"
 
-# 渠道/站点 → 领星本地仓 wid(草案, 名称逐一对上领星 31 仓; Frankie/采购 确认后定稿)。
-# env LINGXING_WID_MAP(JSON) 可覆盖, 无需改代码。
-CHAN_TO_WID = {
-    "美国": 5893, "加拿大": 5897, "墨西哥": 5896, "日本": 5895,
-    "欧洲": 5894, "英国": 5898, "澳大利亚": 15278,
-    "沃尔玛": 4929, "美客多-墨西哥": 4928, "美客多-巴西": 12357,
-    "国内门店渠道-威": 14837, "国内线上-淘宝正方体": 14839,
-}
-try:
-    CHAN_TO_WID.update(json.loads(os.environ.get("LINGXING_WID_MAP", "") or "{}"))
-except Exception:
-    pass
-
 COMMIT = os.environ.get("INBOUND_ERP_COMMIT", "0") == "1"
+
+_WID_MAP = None
+def build_wid_map():
+    """仓库映射表 tblBBOM07taRUtRQ → {仓库名称: wid}(与 procurement_to_erp 同源, 单一真相源)。"""
+    global _WID_MAP
+    if _WID_MAP is not None:
+        return _WID_MAP
+    out = {}
+    r = pp.feishu_api("GET",
+        f"https://open.feishu.cn/open-apis/bitable/v1/apps/{pp.WAREHOUSE_APP_TOKEN}/tables/{pp.WAREHOUSE_TABLE_ID}/records?page_size=200")
+    for it in (r.get("data") or {}).get("items", []):
+        f = it["fields"]
+        nm = pi.txt(f.get("仓库名称")); wid = pi.txt(f.get("仓库ID(wid)"))
+        if nm and wid:
+            try:
+                out[nm] = int(float(wid))
+            except (TypeError, ValueError):
+                pass
+    _WID_MAP = out
+    return out
+
+def resolve_wid(name):
+    """仓库名 → wid(精确; 不中去尾部括号后缀重试, 同 procurement_to_erp)。"""
+    if not name:
+        return None
+    wm = build_wid_map()
+    return wm.get(name) or wm.get(re.sub(r"[（(][^（()）]*[）)]\s*$", "", name).strip())
 
 
 def _order_sn(recv_fields, picks, ships, contracts):
@@ -62,6 +76,7 @@ def _order_sn(recv_fields, picks, ships, contracts):
 def run():
     mode = "COMMIT(真录领星)" if COMMIT else "DRY-RUN(只打印payload)"
     print(f"=== B2 入库→领星 orderAdd [{mode}] ===")
+    mains = {r["record_id"]: r["fields"] for r in pi.get_records(pi.MAIN)}
     picks = {r["record_id"]: r["fields"] for r in pi.get_records(PICK)}
     ships = {r["record_id"]: r["fields"] for r in pi.get_records(SHIP)}
     contracts = {r["record_id"]: r["fields"] for r in pi.get_records(CONTRACT)}
@@ -77,15 +92,18 @@ def run():
         ino = pi.txt(f.get("入库登记号"))
         sku = pi.txt(f.get("ERP SKU"))
         good = pi.num(f.get("实际入库数量")) or pi.num(f.get("应入库数量"))
-        # wid: 优先 渠道/站点(经关联提货), 退 仓库名直配领星仓名
-        chan = ""
-        for pid in pi.link_ids(f.get("关联提货计划")):
-            if pid in picks:
-                chan = pi.sel(picks[pid].get("渠道/站点")) or chan
-        wid = CHAN_TO_WID.get(chan)
+        # wid: 复用仓库映射表(单一真相源)。本地仓库名 = 入库行「仓库名」(仓库填) 优先;
+        #       退 关联采购明细→主表「本地仓库名」(采购计划单表已备好)。
+        wh = pi.txt(f.get("仓库名"))
+        if not resolve_wid(wh):
+            for mid in pi.link_ids(f.get("关联采购明细")):
+                mwh = pi.txt(mains.get(mid, {}).get("本地仓库名"))
+                if resolve_wid(mwh):
+                    wh = mwh; break
+        wid = resolve_wid(wh)
         order_sn = _order_sn(f, picks, ships, contracts)
         if not wid:
-            print(f"  ⚠ 跳过 {ino}: 渠道『{chan}』无 wid 映射(补 CHAN_TO_WID/env)"); skip += 1; continue
+            print(f"  ⚠ 跳过 {ino}: 仓库名『{wh}』不在仓库映射表(请仓库填规范仓库名/或单表订单补本地仓库名)"); skip += 1; continue
         if not sku or good <= 0:
             print(f"  ⚠ 跳过 {ino}: sku/数量缺({sku}/{good})"); skip += 1; continue
         payload = {
@@ -95,7 +113,7 @@ def run():
             "inbound_idempotent_code": rid,              # 唯一幂等键
             "product_list": [{"sku": sku, "good_num": int(good), "bad_num": 0}],
         }
-        print(f"  入库 {ino} | 渠道{chan}→wid{wid} | sku{sku}×{int(good)} | order_sn={order_sn or '(空,需全product_list)'}")
+        print(f"  入库 {ino} | 仓库『{wh}』→wid{wid} | sku{sku}×{int(good)} | order_sn={order_sn or '(空,需全product_list)'}")
         print(f"    payload={json.dumps(payload, ensure_ascii=False)}")
         if not COMMIT:
             continue

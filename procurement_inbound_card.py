@@ -21,8 +21,9 @@ import procurement_inbound as pi
 
 APP3_ID = os.environ.get("FEISHU_APP3_ID", ""); APP3_SECRET = os.environ.get("FEISHU_APP3_SECRET", "")
 FRANKIE_UNION_ID = os.environ.get("FRANKIE_UNION_ID", "")
-# 仓库主管真发收件人(张灿煊): 邮箱在聪哥3号 ns lookup open_id; 空→fallback Frankie(dry-run 阶段)
-RECV_TARGET_EMAIL = os.environ.get("RECV_TARGET_EMAIL", "")
+# 仓库主管真发收件人(张灿煊)= 飞书 union_id(跨同开发者 app 通用, 从飞书通讯录查得, 非邮箱/非硬编码职务)。
+# 空→fallback Frankie(dry-run 阶段)。聪哥3号 receive_id_type=union_id 直发。
+RECV_TARGET_UNION_ID = os.environ.get("RECV_TARGET_UNION_ID", "")
 APP, PICK, SHIP, RECV = pi.APP, pi.PICK, pi.SHIP, pi.RECV
 # 云端: COMMIT/ONLY_BATCH 由 main.py 在调用 run() 前设模块全局
 COMMIT = os.environ.get("INBOUND_CARDS_COMMIT", "0") == "1"
@@ -43,18 +44,6 @@ def call3(tok, method, path, body=None):
         return json.loads(urllib.request.urlopen(req, timeout=30).read())
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode('utf-8','ignore')[:300]}")
-
-def open_id_by_email(tok, email):
-    """邮箱 → 聪哥3号 ns open_id(仓库主管真发用); 查不到→None。"""
-    if not email: return None
-    try:
-        r = call3(tok, "POST", "/contact/v3/users/batch_get_id?user_id_type=open_id",
-                  {"emails": [email]})
-        for u in (r.get("data", {}) or {}).get("user_list", []):
-            if u.get("user_id"): return u["user_id"]
-    except Exception as e:
-        print(f"    ⚠ 邮箱 lookup 失败: {str(e)[:120]}")
-    return None
 
 def build_card(batch_no, rows):
     """rows: list of dict(record_id, chan, whtype, wh_name, expect)"""
@@ -113,13 +102,12 @@ def run():
         if ONLY_BATCH and batch_no != ONLY_BATCH: continue
         card = build_card(batch_no, rows)
         if COMMIT:
-            oid = open_id_by_email(tok3, RECV_TARGET_EMAIL)
-            if oid:
-                print(f"  批次 {batch_no}: {len(rows)}仓 → 发仓库主管 {RECV_TARGET_EMAIL} [真发]")
-                resp = call3(tok3, "POST", "/im/v1/messages?receive_id_type=open_id",
-                    {"receive_id": oid, "msg_type": "interactive", "content": json.dumps(card, ensure_ascii=False)})
+            if RECV_TARGET_UNION_ID:
+                print(f"  批次 {batch_no}: {len(rows)}仓 → 发仓库主管 张灿煊(union_id) [真发]")
+                resp = call3(tok3, "POST", "/im/v1/messages?receive_id_type=union_id",
+                    {"receive_id": RECV_TARGET_UNION_ID, "msg_type": "interactive", "content": json.dumps(card, ensure_ascii=False)})
             else:
-                print(f"  批次 {batch_no}: {len(rows)}仓 → 仓库主管邮箱未配/查不到, fallback 发 Frankie [真发]")
+                print(f"  批次 {batch_no}: {len(rows)}仓 → 仓库主管 union_id 未配, fallback 发 Frankie [真发]")
                 resp = call3(tok3, "POST", "/im/v1/messages?receive_id_type=union_id",
                     {"receive_id": FRANKIE_UNION_ID, "msg_type": "interactive", "content": json.dumps(card, ensure_ascii=False)})
         else:

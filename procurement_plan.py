@@ -13,6 +13,9 @@ FEISHU_APP2_ID = E("FEISHU_APP2_ID", "")       # 聪哥2号 bitable 读写
 FEISHU_APP2_SECRET = E("FEISHU_APP2_SECRET", "")
 LINGXING_PROXY_URL = E("LINGXING_PROXY_URL", "")   # n8n /webhook/lingxing-proxy
 LINGXING_PROXY_TOKEN = E("LINGXING_PROXY_TOKEN", "")
+# 仓库映射表(站点/本地仓库名 → 领星 wid 单一真相源, 与 procurement_to_erp 同源; 非密钥)
+WAREHOUSE_APP_TOKEN = E("WAREHOUSE_APP_TOKEN", "CjQAbEjzzaInS7sPbypcvp3Ynlf")
+WAREHOUSE_TABLE_ID = E("WAREHOUSE_TABLE_ID", "tblBBOM07taRUtRQ")
 
 _tok_cache = {}
 
