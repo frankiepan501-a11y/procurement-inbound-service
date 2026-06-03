@@ -23,6 +23,15 @@ ORDERADD = "/erp/sc/routing/storage/storage/orderAdd"
 
 COMMIT = os.environ.get("INBOUND_ERP_COMMIT", "0") == "1"
 
+# 口径(Frankie 2026-06-03 定稿): 采购入库只录"采购入库仓"; 下列字样仓=私人海外仓真实库存登记用, 不录采购入库。
+# 含字样即拒: 海外仓 / 万邑通(美国第三方海外仓×10) / 波兰仓(千象盒子)。env ERP_NON_INBOUND_MARKERS(逗号分隔)可覆盖。
+NON_INBOUND_MARKERS = [m.strip() for m in os.environ.get(
+    "ERP_NON_INBOUND_MARKERS", "海外仓,万邑通,波兰仓").split(",") if m.strip()]
+
+def is_inbound_wh(name):
+    """True=采购入库目的仓(本地仓/国内渠道仓/Temu全托/台湾凯发/千象国内中转仓等); False=库存登记仓不录。"""
+    return not any(mk in (name or "") for mk in NON_INBOUND_MARKERS)
+
 _WID_MAP = None
 def build_wid_map():
     """仓库映射表 tblBBOM07taRUtRQ → {仓库名称: wid}(与 procurement_to_erp 同源, 单一真相源)。"""
@@ -104,9 +113,9 @@ def run():
         order_sn = _order_sn(f, picks, ships, contracts)
         if not wid:
             print(f"  ⚠ 跳过 {ino}: 仓库名『{wh}』不在仓库映射表(请仓库填规范仓库名/或单表订单补本地仓库名)"); skip += 1; continue
-        # 口径闸(Frankie 2026-06-03): 采购入库只录"本地仓"字眼仓; "海外仓"字眼仓=私人海外仓真实库存登记用, 非采购入库目的仓。
-        if "海外仓" in wh:
-            print(f"  ⚠ 跳过 {ino}: 仓库名『{wh}』是海外仓(私人海外仓库存登记用), 采购入库不录此仓→请改本地仓"); skip += 1; continue
+        # 口径闸(Frankie 2026-06-03 定稿): 海外仓/万邑通/波兰仓 = 私人海外仓真实库存登记用, 采购入库不录此仓。
+        if not is_inbound_wh(wh):
+            print(f"  ⚠ 跳过 {ino}: 仓库名『{wh}』是库存登记仓(海外仓/万邑通/波兰仓), 采购入库不录→请改采购入库仓"); skip += 1; continue
         if not sku or good <= 0:
             print(f"  ⚠ 跳过 {ino}: sku/数量缺({sku}/{good})"); skip += 1; continue
         payload = {
