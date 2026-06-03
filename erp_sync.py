@@ -104,6 +104,9 @@ def run():
         order_sn = _order_sn(f, picks, ships, contracts)
         if not wid:
             print(f"  ⚠ 跳过 {ino}: 仓库名『{wh}』不在仓库映射表(请仓库填规范仓库名/或单表订单补本地仓库名)"); skip += 1; continue
+        # 口径闸(Frankie 2026-06-03): 采购入库只录"本地仓"字眼仓; "海外仓"字眼仓=私人海外仓真实库存登记用, 非采购入库目的仓。
+        if "海外仓" in wh:
+            print(f"  ⚠ 跳过 {ino}: 仓库名『{wh}』是海外仓(私人海外仓库存登记用), 采购入库不录此仓→请改本地仓"); skip += 1; continue
         if not sku or good <= 0:
             print(f"  ⚠ 跳过 {ino}: sku/数量缺({sku}/{good})"); skip += 1; continue
         payload = {
