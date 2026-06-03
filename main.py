@@ -21,6 +21,7 @@ import procurement_plan as pp
 import procurement_inbound as eng
 import procurement_pickup_card as pcard
 import procurement_inbound_card as rcard
+import erp_sync
 
 app = FastAPI(title="procurement-inbound")
 E = os.environ.get
@@ -108,7 +109,8 @@ def _sla_card(alerts):
 @app.get("/health")
 def health():
     return {"ok": True, "service": "procurement-inbound",
-            "commit": {"sweep": eng.COMMIT, "cards": pcard.COMMIT, "sla": SLA_COMMIT_DEFAULT}}
+            "commit": {"sweep": eng.COMMIT, "cards": pcard.COMMIT, "sla": SLA_COMMIT_DEFAULT,
+                       "erp": erp_sync.COMMIT}}
 
 
 @app.post("/inbound/sweep")
@@ -154,6 +156,17 @@ def send_recv_cards(commit: bool = None, batch: str = None,
     if err:
         raise HTTPException(status_code=500, detail={"error": err, "log": out[-2000:]})
     return {"ok": True, "commit": rcard.COMMIT, "batch": batch, "log": out}
+
+
+@app.post("/inbound/sync-erp")
+def sync_erp(commit: bool = None, authorization: str = Header(default="")):
+    """B2 入库→领星 orderAdd 真录库存。默认 dry-run(只打印 payload)。高风险写, test-first。"""
+    _auth(authorization)
+    erp_sync.COMMIT = _qbool(commit, erp_sync.COMMIT)
+    out, ret, err = _capture(erp_sync.run)
+    if err:
+        raise HTTPException(status_code=500, detail={"error": err, "log": out[-2000:]})
+    return {"ok": True, "commit": erp_sync.COMMIT, "result": ret, "log": out}
 
 
 @app.post("/inbound/sla")
