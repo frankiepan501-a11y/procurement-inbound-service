@@ -45,12 +45,12 @@ def call3(tok, method, path, body=None):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode('utf-8','ignore')[:300]}")
 
-REASONS = ["无差异", "工厂多发", "工厂少发", "不良品", "运输破损", "其他"]
+REASONS = ["无差异", "工厂多发", "工厂少发", "工厂漏发", "质量不良", "运输破损", "错发混发", "其他"]
 
 def build_card(batch_no, rows):
     """rows: list of dict(record_id, chan, whtype, wh_name, expect, sku, product)"""
     elements = [{"tag": "div", "text": {"tag": "lark_md",
-        "content": "货到仓后, 请按各仓填 **实际到货数量** 与 **良品入库数量** 确认入库；有差异请选「差异原因」。提交后系统登记入库。"}}]
+        "content": "货到仓后, 请按各仓填 **实际到货数量** + **良品入库数量**(进库存数)，有不良填 **不良品数量**(选填)，差异可多选原因。提交后系统自动算「不明缺口」并登记入库。"}}]
     for r in rows:
         em = WH_EMOJI.get(r["whtype"], "📦")
         prod, sku = r.get("product") or "", r.get("sku") or ""
@@ -73,19 +73,22 @@ def build_card(batch_no, rows):
                 {"tag": "input", "name": f"good_{rid}", "label_position": "left",
                  "label": {"tag": "plain_text", "content": "良品入库数量:"},
                  "placeholder": {"tag": "plain_text", "content": "实际入仓可售数(进库存)，无不良=到货数"}},
-                {"tag": "select_static", "name": f"rsn_{rid}",
-                 "placeholder": {"tag": "plain_text", "content": "差异原因(无差异可不选)"},
+                {"tag": "input", "name": f"bad_{rid}", "label_position": "left",
+                 "label": {"tag": "plain_text", "content": "不良品数量:"},
+                 "placeholder": {"tag": "plain_text", "content": "选填；不填=到货-良品全算不良。填了系统算不明缺口"}},
+                {"tag": "multi_select_static", "name": f"rsn_{rid}",
+                 "placeholder": {"tag": "plain_text", "content": "差异原因(可多选，无差异可不选)"},
                  "options": [{"text": {"tag": "plain_text", "content": x}, "value": x} for x in REASONS]},
                 {"tag": "input", "name": f"note_{rid}", "label_position": "left",
                  "label": {"tag": "plain_text", "content": "备注:"},
-                 "placeholder": {"tag": "plain_text", "content": "差异说明(选填)"}},
+                 "placeholder": {"tag": "plain_text", "content": "差异说明/错发型号等(选填)"}},
                 {"tag": "button", "action_type": "form_submit", "name": f"submit_{rid}",
                  "text": {"tag": "plain_text", "content": "✅确认入库"}, "type": "primary",
                  "value": {**base, "action": "inb_recv_confirm"}},
             ]},
         ]
     elements += [{"tag": "hr"}, {"tag": "note", "elements": [{"tag": "plain_text",
-        "content": "良品入库数=实际进库存可售数。到货≠计划 或 良品<到货 时请选差异原因，便于追工厂/审计。"}]}]
+        "content": "良品=进库存可售数。系统勾稽：不明缺口=到货-良品-不良(>0=去向不明，多为错发/缺件，需核实)。差异多选原因，便于追工厂/审计。"}]}]
     return {"config": {"wide_screen_mode": True, "update_multi": True},
             "header": {"title": {"tag": "plain_text", "content": f"📥 入库登记 · {batch_no}"}, "template": "green"},
             "elements": elements}
