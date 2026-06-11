@@ -45,7 +45,7 @@ def call3(tok, method, path, body=None):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode('utf-8','ignore')[:300]}")
 
-REASONS = ["无差异", "工厂多发", "工厂少发", "工厂漏发", "错发混发", "其他"]
+REASONS = ["无差异", "工厂多发", "工厂少发", "其他"]
 
 def build_card(batch_no, rows):
     """rows: list of dict(record_id, chan, whtype, wh_name, expect, sku, product)"""
@@ -85,7 +85,7 @@ def build_card(batch_no, rows):
             ]},
         ]
     elements += [{"tag": "hr"}, {"tag": "note", "elements": [{"tag": "plain_text",
-        "content": "差异原因只填数量类(多发/少发/漏发/错发)。质量不良/破损属QC, 待检入库后QC完成再登记。两入库方式请与领星前端操作一致。"}]}]
+        "content": "差异原因只填到货点数能直接判断的(多发/少发)。漏发/错发混发/质量不良/破损属QC, 待检入库后QC完成再登记。两入库方式请与领星前端操作一致。"}]}]
     return {"config": {"wide_screen_mode": True, "update_multi": True},
             "header": {"title": {"tag": "plain_text", "content": f"📥 入库登记 · {batch_no}"}, "template": "green"},
             "elements": elements}
