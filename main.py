@@ -7,7 +7,8 @@
 端点(BEARER 鉴权; 每个端点可 ?commit=true/false 覆盖 env 默认):
   POST /inbound/sweep              archive→stamp→alloc→materialize→rollup(飞书内状态推进)
   POST /inbound/send-pickup-cards  提货「系统已算」→ 运营卡(dry-run发Frankie / commit发出货群)
-  POST /inbound/send-recv-cards    入库「待入库」→ 仓库卡(dry-run发Frankie / commit发张灿煊)
+  POST /inbound/send-recv-cards    入库「待入库」→ 仓库卡(快捷/待检两按钮; dry-run发Frankie / commit发张灿煊)
+  POST /inbound/send-qc-cards      入库「待检」→ QC完成卡(良品/不良/上架; dry-run发Frankie / commit发张灿煊)
   POST /inbound/sla                生产跟催+出货/提货/入库超时 → 通知(dry-run发Frankie / commit发LOG群)
   GET  /health  GET /openapi.json(FastAPI 自带, 部署 sentinel)
 
@@ -21,6 +22,7 @@ import procurement_plan as pp
 import procurement_inbound as eng
 import procurement_pickup_card as pcard
 import procurement_inbound_card as rcard
+import procurement_qc_card as qccard
 import erp_sync
 
 app = FastAPI(title="procurement-inbound")
@@ -109,8 +111,8 @@ def _sla_card(alerts):
 @app.get("/health")
 def health():
     return {"ok": True, "service": "procurement-inbound",
-            "commit": {"sweep": eng.COMMIT, "cards": pcard.COMMIT, "sla": SLA_COMMIT_DEFAULT,
-                       "erp": erp_sync.COMMIT}}
+            "commit": {"sweep": eng.COMMIT, "cards": pcard.COMMIT, "recv": rcard.COMMIT,
+                       "qc": qccard.COMMIT, "sla": SLA_COMMIT_DEFAULT, "erp": erp_sync.COMMIT}}
 
 
 @app.post("/inbound/sweep")
@@ -156,6 +158,18 @@ def send_recv_cards(commit: bool = None, batch: str = None,
     if err:
         raise HTTPException(status_code=500, detail={"error": err, "log": out[-2000:]})
     return {"ok": True, "commit": rcard.COMMIT, "batch": batch, "log": out}
+
+
+@app.post("/inbound/send-qc-cards")
+def send_qc_cards(commit: bool = None, batch: str = None,
+                  authorization: str = Header(default="")):
+    _auth(authorization)
+    qccard.COMMIT = _qbool(commit, qccard.COMMIT)
+    qccard.ONLY_BATCH = batch
+    out, _, err = _capture(qccard.run)
+    if err:
+        raise HTTPException(status_code=500, detail={"error": err, "log": out[-2000:]})
+    return {"ok": True, "commit": qccard.COMMIT, "batch": batch, "log": out}
 
 
 @app.post("/inbound/sync-erp")
