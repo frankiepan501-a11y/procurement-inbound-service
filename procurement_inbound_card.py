@@ -45,29 +45,47 @@ def call3(tok, method, path, body=None):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode('utf-8','ignore')[:300]}")
 
+REASONS = ["无差异", "工厂多发", "工厂少发", "不良品", "运输破损", "其他"]
+
 def build_card(batch_no, rows):
-    """rows: list of dict(record_id, chan, whtype, wh_name, expect)"""
+    """rows: list of dict(record_id, chan, whtype, wh_name, expect, sku, product)"""
     elements = [{"tag": "div", "text": {"tag": "lark_md",
-        "content": "货到仓后, 请按各仓**实收数量**确认入库。提交后系统登记入库" + ("(并同步领星库存)" if False else "") + "。"}}]
+        "content": "货到仓后, 请按各仓填 **实际到货数量** 与 **良品入库数量** 确认入库；有差异请选「差异原因」。提交后系统登记入库。"}}]
     for r in rows:
         em = WH_EMOJI.get(r["whtype"], "📦")
-        head = f"{em} **{r['chan']}** · {r['whtype']}" + (f" · {r['wh_name']}" if r['wh_name'] else "") + f"\n应入 **{r['expect']:g}**"
-        base = {"app_token": APP, "table_id": RECV, "record_id": r["record_id"],
+        prod, sku = r.get("product") or "", r.get("sku") or ""
+        if prod and sku:   pline = f"\n产品: **{prod}** (SKU: {sku})"
+        elif sku:          pline = f"\nSKU: **{sku}**"
+        elif prod:         pline = f"\n产品: **{prod}**"
+        else:              pline = ""
+        head = (f"{em} **{r['chan']}** · {r['whtype']}" + (f" · {r['wh_name']}" if r['wh_name'] else "")
+                + pline + f"\n计划应到 **{r['expect']:g}**")
+        rid = r["record_id"]
+        base = {"app_token": APP, "table_id": RECV, "record_id": rid,
                 "expect": r["expect"], "chan": r["chan"]}
         elements += [
             {"tag": "hr"},
             {"tag": "div", "text": {"tag": "lark_md", "content": head}},
-            {"tag": "form", "name": f"f_{r['record_id']}", "elements": [
-                {"tag": "input", "name": f"qty_{r['record_id']}", "label_position": "left",
-                 "label": {"tag": "plain_text", "content": "实收数量:"},
-                 "placeholder": {"tag": "plain_text", "content": f"应入 {r['expect']:g}，填实收后点确认"}},
-                {"tag": "button", "action_type": "form_submit", "name": f"submit_{r['record_id']}",
+            {"tag": "form", "name": f"f_{rid}", "elements": [
+                {"tag": "input", "name": f"arr_{rid}", "label_position": "left",
+                 "label": {"tag": "plain_text", "content": "实际到货数量:"},
+                 "placeholder": {"tag": "plain_text", "content": f"整批实际到货(含不良)，默认 {r['expect']:g}"}},
+                {"tag": "input", "name": f"good_{rid}", "label_position": "left",
+                 "label": {"tag": "plain_text", "content": "良品入库数量:"},
+                 "placeholder": {"tag": "plain_text", "content": "实际入仓可售数(进库存)，无不良=到货数"}},
+                {"tag": "select_static", "name": f"rsn_{rid}",
+                 "placeholder": {"tag": "plain_text", "content": "差异原因(无差异可不选)"},
+                 "options": [{"text": {"tag": "plain_text", "content": x}, "value": x} for x in REASONS]},
+                {"tag": "input", "name": f"note_{rid}", "label_position": "left",
+                 "label": {"tag": "plain_text", "content": "备注:"},
+                 "placeholder": {"tag": "plain_text", "content": "差异说明(选填)"}},
+                {"tag": "button", "action_type": "form_submit", "name": f"submit_{rid}",
                  "text": {"tag": "plain_text", "content": "✅确认入库"}, "type": "primary",
                  "value": {**base, "action": "inb_recv_confirm"}},
             ]},
         ]
     elements += [{"tag": "hr"}, {"tag": "note", "elements": [{"tag": "plain_text",
-        "content": "实收≠应入时按实际填。海外仓按海外仓后台回传数确认。"}]}]
+        "content": "良品入库数=实际进库存可售数。到货≠计划 或 良品<到货 时请选差异原因，便于追工厂/审计。"}]}]
     return {"config": {"wide_screen_mode": True, "update_multi": True},
             "header": {"title": {"tag": "plain_text", "content": f"📥 入库登记 · {batch_no}"}, "template": "green"},
             "elements": elements}
@@ -77,6 +95,7 @@ def run():
     print(f"=== 仓库入库卡 [{mode}] ===")
     picks = {r["record_id"]: r["fields"] for r in pi.get_records(PICK)}
     ships = {r["record_id"]: r["fields"] for r in pi.get_records(SHIP)}
+    mains = {r["record_id"]: r["fields"] for r in pi.get_records(pi.MAIN)}
     groups = {}
     for rec in pi.get_records(RECV):
         f = rec["fields"]
@@ -91,10 +110,16 @@ def run():
             sids = pi.link_ids(pf.get("关联出货批次"))
             if sids and sids[0] in ships:
                 batch_no = pi.txt(ships[sids[0]].get("出货批次号")) or batch_no
+        sku = pi.txt(f.get("ERP SKU"))
+        prod = ""
+        mids = pi.link_ids(f.get("关联采购明细"))
+        if mids and mids[0] in mains:
+            prod = pi.txt(mains[mids[0]].get("产品名称"))
         groups.setdefault(batch_no, []).append({
             "record_id": rec["record_id"], "chan": chan,
             "whtype": pi.sel(f.get("目的仓类型")) or "海外仓",
-            "wh_name": pi.txt(f.get("仓库名")), "expect": pi.num(f.get("应入库数量"))})
+            "wh_name": pi.txt(f.get("仓库名")), "expect": pi.num(f.get("应入库数量")),
+            "sku": sku, "product": prod})
     if not groups:
         print("  无『待入库』登记行(需先 procurement_inbound.py --commit 物化, 且提货=运营已确认)"); return
     tok3 = get_token3()
