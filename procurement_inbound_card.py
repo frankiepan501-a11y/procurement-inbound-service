@@ -45,12 +45,12 @@ def call3(tok, method, path, body=None):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode('utf-8','ignore')[:300]}")
 
-REASONS = ["无差异", "工厂多发", "工厂少发", "工厂漏发", "质量不良", "运输破损", "错发混发", "其他"]
+REASONS = ["无差异", "工厂多发", "工厂少发", "工厂漏发", "错发混发", "其他"]
 
 def build_card(batch_no, rows):
     """rows: list of dict(record_id, chan, whtype, wh_name, expect, sku, product)"""
     elements = [{"tag": "div", "text": {"tag": "lark_md",
-        "content": "货到仓后, 请按各仓填 **实际到货数量** + **良品入库数量**(进库存数)，有不良填 **不良品数量**(选填)，差异可多选原因。提交后系统自动算「不明缺口」并登记入库。"}}]
+        "content": "货到仓后, 请按各仓填 **实际到货数量** 与差异原因(仅数量类), 再选入库方式:\n**⚡快捷入库**=免检/抽检快, 直接进可用库存; **🔬待检入库**=需QC, 进待检待上架(QC结果稍后登记)。"}}]
     for r in rows:
         em = WH_EMOJI.get(r["whtype"], "📦")
         prod, sku = r.get("product") or "", r.get("sku") or ""
@@ -69,26 +69,23 @@ def build_card(batch_no, rows):
             {"tag": "form", "name": f"f_{rid}", "elements": [
                 {"tag": "input", "name": f"arr_{rid}", "label_position": "left",
                  "label": {"tag": "plain_text", "content": "实际到货数量:"},
-                 "placeholder": {"tag": "plain_text", "content": f"整批实际到货(含不良)，默认 {r['expect']:g}"}},
-                {"tag": "input", "name": f"good_{rid}", "label_position": "left",
-                 "label": {"tag": "plain_text", "content": "良品入库数量:"},
-                 "placeholder": {"tag": "plain_text", "content": "实际入仓可售数(进库存)，无不良=到货数"}},
-                {"tag": "input", "name": f"bad_{rid}", "label_position": "left",
-                 "label": {"tag": "plain_text", "content": "不良品数量:"},
-                 "placeholder": {"tag": "plain_text", "content": "选填；不填=到货-良品全算不良。填了系统算不明缺口"}},
+                 "placeholder": {"tag": "plain_text", "content": f"整批实际到货，默认 {r['expect']:g}"}},
                 {"tag": "multi_select_static", "name": f"rsn_{rid}",
                  "placeholder": {"tag": "plain_text", "content": "差异原因(可多选，无差异可不选)"},
                  "options": [{"text": {"tag": "plain_text", "content": x}, "value": x} for x in REASONS]},
                 {"tag": "input", "name": f"note_{rid}", "label_position": "left",
                  "label": {"tag": "plain_text", "content": "备注:"},
                  "placeholder": {"tag": "plain_text", "content": "差异说明/错发型号等(选填)"}},
-                {"tag": "button", "action_type": "form_submit", "name": f"submit_{rid}",
-                 "text": {"tag": "plain_text", "content": "✅确认入库"}, "type": "primary",
-                 "value": {**base, "action": "inb_recv_confirm"}},
+                {"tag": "button", "action_type": "form_submit", "name": f"quick_{rid}",
+                 "text": {"tag": "plain_text", "content": "⚡快捷入库(免检/抽检快)"}, "type": "primary",
+                 "value": {**base, "action": "inb_recv_quick"}},
+                {"tag": "button", "action_type": "form_submit", "name": f"qc_{rid}",
+                 "text": {"tag": "plain_text", "content": "🔬待检入库(需QC)"}, "type": "default",
+                 "value": {**base, "action": "inb_recv_qc"}},
             ]},
         ]
     elements += [{"tag": "hr"}, {"tag": "note", "elements": [{"tag": "plain_text",
-        "content": "良品=进库存可售数。系统勾稽：不明缺口=到货-良品-不良(>0=去向不明，多为错发/缺件，需核实)。差异多选原因，便于追工厂/审计。"}]}]
+        "content": "差异原因只填数量类(多发/少发/漏发/错发)。质量不良/破损属QC, 待检入库后QC完成再登记。两入库方式请与领星前端操作一致。"}]}]
     return {"config": {"wide_screen_mode": True, "update_multi": True},
             "header": {"title": {"tag": "plain_text", "content": f"📥 入库登记 · {batch_no}"}, "template": "green"},
             "elements": elements}
