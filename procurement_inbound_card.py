@@ -103,18 +103,22 @@ def run():
             continue
         # 入库行 → 关联提货 → 渠道 + 出货批次
         pids = pi.link_ids(f.get("关联提货计划"))
-        chan, batch_no = "?", "(未关联)"
+        chan, batch_no, ship_prod = "?", "(未关联)", ""
         if pids and pids[0] in picks:
             pf = picks[pids[0]]
             chan = pi.sel(pf.get("渠道/站点")) or "?"
             sids = pi.link_ids(pf.get("关联出货批次"))
             if sids and sids[0] in ships:
-                batch_no = pi.txt(ships[sids[0]].get("出货批次号")) or batch_no
+                sf = ships[sids[0]]
+                batch_no = pi.txt(sf.get("出货批次号")) or batch_no
+                ship_prod = pi.txt(sf.get("本批SKU及数量"))
         sku = pi.txt(f.get("ERP SKU"))
         prod = ""
         mids = pi.link_ids(f.get("关联采购明细"))
         if mids and mids[0] in mains:
             prod = pi.txt(mains[mids[0]].get("产品名称"))
+        if not prod:
+            prod = ship_prod  # fallback: 出货台「本批SKU及数量」(standalone 无主表时)
         groups.setdefault(batch_no, []).append({
             "record_id": rec["record_id"], "chan": chan,
             "whtype": pi.sel(f.get("目的仓类型")) or "海外仓",
