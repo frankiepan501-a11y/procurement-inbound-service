@@ -394,23 +394,25 @@ def sla_check(now_ms=None):
                            "催采购跟工厂确认生产/出货进度 + 录出货计划"))
     for r in ships:
         f = r["fields"]; bn = txt(f.get("出货批次号")); st = sel(f.get("出货状态"))
+        pn = txt(f.get("本批SKU及数量")); bd = f"{bn}" + (f"·{pn}" if pn else "")
         if st != "已出货":
             ov = _days_over(f.get("计划出货日期"), SLA_SHIP_PLAN_DAYS, now_ms)
             if ov is not None:
-                alerts.append((_level(ov, SLA_SHIP_PLAN_DAYS), f"出货批次 {bn} 超计划出货 {ov:.0f}天未出货", "催采购(问供应商交期)"))
+                alerts.append((_level(ov, SLA_SHIP_PLAN_DAYS), f"出货批次 {bd} 超计划出货 {ov:.0f}天未出货", "催采购(问供应商交期)"))
         else:
             prows = pick_by_ship.get(r["record_id"], [])
             all_conf = prows and all(sel(p.get("分配状态")) == "运营已确认" for p in prows)
             if not all_conf:
                 ov = _days_over(f.get("实际出货日期"), SLA_PICK_DAYS, now_ms)
                 if ov is not None:
-                    alerts.append((_level(ov, SLA_PICK_DAYS), f"出货批次 {bn} 已出货 {ov:.0f}天 提货分配未采购确认", "催采购+运营"))
+                    alerts.append((_level(ov, SLA_PICK_DAYS), f"出货批次 {bd} 已出货 {ov:.0f}天 提货分配未采购确认", "催采购+运营"))
     for r in recvs:
-        f = r["fields"]; rn = txt(f.get("入库登记号"))
+        f = r["fields"]; rn = txt(f.get("入库登记号")); rsku = txt(f.get("ERP SKU"))
+        rd = f"{rn}" + (f"·{rsku}" if rsku else "")
         if sel(f.get("入库状态")) != "已入库":
             ov = _days_over(f.get("规定入库时间"), SLA_RECV_DAYS, now_ms)
             if ov is not None:
-                alerts.append((_level(ov, SLA_RECV_DAYS), f"入库登记 {rn} 超规定入库 {ov:.0f}天未入库", "催仓库"))
+                alerts.append((_level(ov, SLA_RECV_DAYS), f"入库登记 {rd} 超规定入库 {ov:.0f}天未入库", "催仓库"))
     if not alerts:
         print("  无超时项"); return alerts
     for lv, what, who in sorted(alerts, key=lambda a: a[0], reverse=True):

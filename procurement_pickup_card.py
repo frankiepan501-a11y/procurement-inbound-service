@@ -55,13 +55,15 @@ def call3(tok, method, path, body=None):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode('utf-8','ignore')[:300]}")
 
-def build_card(batch_no, ship_qty, sku, rows):
+def build_card(batch_no, ship_qty, sku, rows, product=""):
     """rows: list of dict(record_id, site, op_name, prev_buy, need, ai, margin)"""
+    pintro = f"产品 **{product}**（SKU: {sku}）" if product else f"SKU: {sku}"
+    pline = (f"\n产品: **{product}** (SKU: {sku})" if product else (f"\nSKU: **{sku}**" if sku else ""))
     elements = [{"tag": "div", "text": {"tag": "lark_md",
-        "content": f"本批出货 **{ship_qty:g}** 件（SKU: {sku}）。请各渠道运营核对后填【最终提货确认数】。\nAI 建议仅供参考，**以你填的为准**。"}}]
+        "content": f"本批出货 **{ship_qty:g}** 件 · {pintro}。请各渠道运营核对后填【最终提货确认数】。\nAI 建议仅供参考，**以你填的为准**。"}}]
     for r in rows:
         em = SITE_EMOJI.get(r["site"], "•")
-        head = (f"{em} **{r['site']}**（{r['op_name']}）\n"
+        head = (f"{em} **{r['site']}**（{r['op_name']}）" + pline + "\n"
                 f"之前采购 {r['prev_buy']} · 本次需求 **{r['need']:g}** · AI建议 {r['ai']:g} · 毛利 {r['margin']}")
         base = {"app_token": APP, "table_id": PICK, "record_id": r["record_id"],
                 "ai": r["ai"], "need": r["need"], "site": r["site"], "batch": batch_no}
@@ -119,7 +121,13 @@ def run():
                          "op_name": SITE_OP.get(pi.sel(f.get("渠道/站点")), "?"),
                          "prev_buy": prev_buy, "need": pi.num(f.get("运营提货需求数量")),
                          "ai": pi.num(f.get("AI建议分配数")), "margin": margin})
-        card = build_card(batch_no, ship_qty, sku, rows)
+        product = pi.txt(sf.get("本批SKU及数量"))  # 兜底: 出货台「本批SKU及数量」
+        for _rec in recs:                            # 优先: 主表「产品名称」
+            _mids = pi.link_ids(_rec["fields"].get("关联采购明细"))
+            if _mids and _mids[0] in mains:
+                _pn = pi.txt(mains[_mids[0]].get("产品名称"))
+                if _pn: product = _pn; break
+        card = build_card(batch_no, ship_qty, sku, rows, product)
         ops = sorted({r["op_name"] for r in rows if r["op_name"] != "?"})
         if COMMIT:
             print(f"  批次 {batch_no}: 发出货群, @{ops}  [真发]")
